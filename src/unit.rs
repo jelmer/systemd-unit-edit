@@ -510,8 +510,20 @@ impl Section {
             }
         }
 
-        // Field doesn't exist, append at the end (before the closing of the section)
-        let insertion_index = self.0.children_with_tokens().count();
+        // Field doesn't exist, append at the end (before trailing whitespace)
+        let children: Vec<_> = self.0.children_with_tokens().collect();
+        let insertion_index = children
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, child)| {
+                child.kind() != SyntaxKind::BLANK_LINE
+                    && child.kind() != SyntaxKind::NEWLINE
+                    && child.kind() != SyntaxKind::WHITESPACE
+            })
+            .map(|(idx, _)| idx + 1)
+            .unwrap_or(children.len());
+
         self.0
             .splice_children(insertion_index..insertion_index, vec![new_entry.0.into()]);
     }
@@ -519,7 +531,21 @@ impl Section {
     /// Add a value for a key (appends even if the key already exists)
     pub fn add(&mut self, key: &str, value: &str) {
         let new_entry = Entry::new(key, value);
-        let insertion_index = self.0.children_with_tokens().count();
+
+        // Find the last non-whitespace child to insert after
+        let children: Vec<_> = self.0.children_with_tokens().collect();
+        let insertion_index = children
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, child)| {
+                child.kind() != SyntaxKind::BLANK_LINE
+                    && child.kind() != SyntaxKind::NEWLINE
+                    && child.kind() != SyntaxKind::WHITESPACE
+            })
+            .map(|(idx, _)| idx + 1)
+            .unwrap_or(children.len());
+
         self.0
             .splice_children(insertion_index..insertion_index, vec![new_entry.0.into()]);
     }
@@ -1670,5 +1696,51 @@ Type=simple
         assert_eq!(section.get("PrivateTmp"), Some("no".to_string()));
         assert_eq!(section.get_bool("RemainAfterExit"), Some(true));
         assert_eq!(section.get_bool("PrivateTmp"), Some(false));
+    }
+
+    #[test]
+    fn test_add_entry_with_trailing_whitespace() {
+        // Section with trailing blank lines
+        let input = r#"[Unit]
+Description=Test Service
+
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.add("After", "network.target");
+        }
+
+        let output = unit.text();
+        // New entry should be added immediately after the last entry, not after whitespace
+        let expected = r#"[Unit]
+Description=Test Service
+After=network.target
+
+"#;
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn test_set_new_entry_with_trailing_whitespace() {
+        // Section with trailing blank lines
+        let input = r#"[Unit]
+Description=Test Service
+
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.set("After", "network.target");
+        }
+
+        let output = unit.text();
+        // New entry should be added immediately after the last entry, not after whitespace
+        let expected = r#"[Unit]
+Description=Test Service
+After=network.target
+
+"#;
+        assert_eq!(output, expected);
     }
 }
