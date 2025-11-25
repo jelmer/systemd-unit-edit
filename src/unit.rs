@@ -23,7 +23,7 @@
 //! # "#;
 //! # let unit = SystemdUnit::from_str(input).unwrap();
 //! # assert_eq!(unit.sections().count(), 2);
-//! # let section = unit.sections().nth(0).unwrap();
+//! # let section = unit.sections().next().unwrap();
 //! # assert_eq!(section.name(), Some("Unit".to_string()));
 //! ```
 
@@ -998,7 +998,7 @@ impl Entry {
     /// # use std::str::FromStr;
     /// let unit = SystemdUnit::from_str("[Service]\nRemainAfterExit=yes\n").unwrap();
     /// let section = unit.get_section("Service").unwrap();
-    /// let entry = section.entries().nth(0).unwrap();
+    /// let entry = section.entries().next().unwrap();
     /// assert_eq!(entry.value_as_bool(), Some(true));
     /// ```
     pub fn value_as_bool(&self) -> Option<bool> {
@@ -1045,7 +1045,7 @@ impl Entry {
     /// # use std::str::FromStr;
     /// let unit = SystemdUnit::from_str("[Service]\nWorkingDirectory=/var/lib/%i\n").unwrap();
     /// let section = unit.get_section("Service").unwrap();
-    /// let entry = section.entries().nth(0).unwrap();
+    /// let entry = section.entries().next().unwrap();
     ///
     /// let mut ctx = SpecifierContext::new();
     /// ctx.set("i", "myinstance");
@@ -1099,7 +1099,7 @@ After=network.target
         let unit = SystemdUnit::from_str(input).unwrap();
         assert_eq!(unit.sections().count(), 1);
 
-        let section = unit.sections().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
         assert_eq!(section.name(), Some("Unit".to_string()));
         assert_eq!(section.get("Description"), Some("Test Service".to_string()));
         assert_eq!(section.get("After"), Some("network.target".to_string()));
@@ -1117,7 +1117,7 @@ After=network.target
         let unit = SystemdUnit::from_str(input).unwrap();
         assert_eq!(unit.sections().count(), 1);
 
-        let section = unit.sections().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
         assert_eq!(section.get("Description"), Some("Test Service".to_string()));
     }
 
@@ -1161,7 +1161,7 @@ WantedBy=multi-user.target
         let input = "[Unit]\nDescription = Test Service\n";
         let unit = SystemdUnit::from_str(input).unwrap();
 
-        let section = unit.sections().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
         assert_eq!(section.get("Description"), Some("Test Service".to_string()));
     }
 
@@ -1170,8 +1170,8 @@ WantedBy=multi-user.target
         let input = "[Service]\nExecStart=/bin/echo \\\n  hello world\n";
         let unit = SystemdUnit::from_str(input).unwrap();
 
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
         assert_eq!(entry.key(), Some("ExecStart".to_string()));
         // Line continuation: backslash is replaced with space
         assert_eq!(entry.value(), Some("/bin/echo   hello world".to_string()));
@@ -1200,11 +1200,11 @@ Description=Test Service
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
         {
-            let mut section = unit.sections().nth(0).unwrap();
+            let mut section = unit.sections().next().unwrap();
             section.set("Description", "Updated Service");
         }
 
-        let section = unit.sections().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
         assert_eq!(
             section.get("Description"),
             Some("Updated Service".to_string())
@@ -1218,11 +1218,11 @@ Description=Test Service
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
         {
-            let mut section = unit.sections().nth(0).unwrap();
+            let mut section = unit.sections().next().unwrap();
             section.set("After", "network.target");
         }
 
-        let section = unit.sections().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
         assert_eq!(section.get("Description"), Some("Test Service".to_string()));
         assert_eq!(section.get("After"), Some("network.target".to_string()));
     }
@@ -1234,7 +1234,7 @@ Wants=foo.service
 Wants=bar.service
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
 
         // get() returns the first value
         assert_eq!(section.get("Wants"), Some("foo.service".to_string()));
@@ -1253,12 +1253,12 @@ Description=Test Service
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
         {
-            let mut section = unit.sections().nth(0).unwrap();
+            let mut section = unit.sections().next().unwrap();
             section.add("Wants", "foo.service");
             section.add("Wants", "bar.service");
         }
 
-        let section = unit.sections().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
         let all_wants = section.get_all("Wants");
         assert_eq!(all_wants.len(), 2);
         assert_eq!(all_wants[0], "foo.service");
@@ -1273,11 +1273,11 @@ After=network.target
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
         {
-            let mut section = unit.sections().nth(0).unwrap();
+            let mut section = unit.sections().next().unwrap();
             section.remove("After");
         }
 
-        let section = unit.sections().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
         assert_eq!(section.get("Description"), Some("Test Service".to_string()));
         assert_eq!(section.get("After"), None);
     }
@@ -1291,11 +1291,11 @@ Description=Test
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
         {
-            let mut section = unit.sections().nth(0).unwrap();
+            let mut section = unit.sections().next().unwrap();
             section.remove_all("Wants");
         }
 
-        let section = unit.sections().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
         assert_eq!(section.get_all("Wants").len(), 0);
         assert_eq!(section.get("Description"), Some("Test".to_string()));
     }
@@ -1306,8 +1306,8 @@ Description=Test
 Description=Test\nService
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
 
         assert_eq!(entry.value(), Some("Test\\nService".to_string()));
         assert_eq!(entry.unescape_value(), Some("Test\nService".to_string()));
@@ -1319,8 +1319,8 @@ Description=Test\nService
 Value=\n\t\r\\\"\'\x41\101\u0041\U00000041
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
 
         let unescaped = entry.unescape_value().unwrap();
         // \n = newline, \t = tab, \r = carriage return, \\ = backslash
@@ -1335,8 +1335,8 @@ Value=\n\t\r\\\"\'\x41\101\u0041\U00000041
 Value=Hello\u0020World\U0001F44D
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
 
         let unescaped = entry.unescape_value().unwrap();
         // \u0020 = space, \U0001F44D = 👍
@@ -1365,8 +1365,8 @@ Value=Hello\u0020World\U0001F44D
 Value=\z\xFF\u12\U1234
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
 
         let unescaped = entry.unescape_value().unwrap();
         // \z is unknown, \xFF has only 2 chars but needs hex, \u12 and \U1234 are incomplete
@@ -1379,8 +1379,8 @@ Value=\z\xFF\u12\U1234
 Description="Test Service"
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
 
         assert_eq!(entry.value(), Some("\"Test Service\"".to_string()));
         assert_eq!(entry.quoted_value(), Some("\"Test Service\"".to_string()));
@@ -1394,8 +1394,8 @@ Description="Test Service"
 Description='Test Service'
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
 
         assert_eq!(entry.value(), Some("'Test Service'".to_string()));
         assert_eq!(entry.unquoted_value(), Some("Test Service".to_string()));
@@ -1408,8 +1408,8 @@ Description='Test Service'
 Description="  Test Service  "
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
 
         // Quotes preserve internal whitespace
         assert_eq!(entry.unquoted_value(), Some("  Test Service  ".to_string()));
@@ -1421,8 +1421,8 @@ Description="  Test Service  "
 Description=Test Service
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
 
         assert_eq!(entry.value(), Some("Test Service".to_string()));
         assert_eq!(entry.unquoted_value(), Some("Test Service".to_string()));
@@ -1435,8 +1435,8 @@ Description=Test Service
 Description="Test Service'
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
 
         // Mismatched quotes should not be considered quoted
         assert_eq!(entry.is_quoted(), None);
@@ -1449,8 +1449,8 @@ Description="Test Service'
 Description=""
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
 
         assert_eq!(entry.is_quoted(), Some('"'));
         assert_eq!(entry.unquoted_value(), Some("".to_string()));
@@ -1462,8 +1462,8 @@ Description=""
 After=network.target remote-fs.target
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
 
         let list = entry.value_as_list();
         assert_eq!(list.len(), 2);
@@ -1477,8 +1477,8 @@ After=network.target remote-fs.target
 After=network.target
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
 
         let list = entry.value_as_list();
         assert_eq!(list.len(), 1);
@@ -1491,8 +1491,8 @@ After=network.target
 After=
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
 
         let list = entry.value_as_list();
         assert_eq!(list.len(), 0);
@@ -1504,8 +1504,8 @@ After=
 After=  network.target   remote-fs.target
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
 
         let list = entry.value_as_list();
         assert_eq!(list.len(), 2);
@@ -1519,7 +1519,7 @@ After=  network.target   remote-fs.target
 After=network.target remote-fs.target
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
 
         let list = section.get_list("After");
         assert_eq!(list.len(), 2);
@@ -1533,7 +1533,7 @@ After=network.target remote-fs.target
 Description=Test
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
 
         let list = section.get_list("After");
         assert_eq!(list.len(), 0);
@@ -1546,11 +1546,11 @@ Description=Test
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
         {
-            let mut section = unit.sections().nth(0).unwrap();
+            let mut section = unit.sections().next().unwrap();
             section.set_list("After", &["network.target", "remote-fs.target"]);
         }
 
-        let section = unit.sections().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
         let list = section.get_list("After");
         assert_eq!(list.len(), 2);
         assert_eq!(list[0], "network.target");
@@ -1564,11 +1564,11 @@ After=foo.target
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
         {
-            let mut section = unit.sections().nth(0).unwrap();
+            let mut section = unit.sections().next().unwrap();
             section.set_list("After", &["network.target", "remote-fs.target"]);
         }
 
-        let section = unit.sections().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
         let list = section.get_list("After");
         assert_eq!(list.len(), 2);
         assert_eq!(list[0], "network.target");
@@ -1582,8 +1582,8 @@ After=foo.target
         for input_val in inputs {
             let input = format!("[Service]\nRemainAfterExit={}\n", input_val);
             let unit = SystemdUnit::from_str(&input).unwrap();
-            let section = unit.sections().nth(0).unwrap();
-            let entry = section.entries().nth(0).unwrap();
+            let section = unit.sections().next().unwrap();
+            let entry = section.entries().next().unwrap();
             assert_eq!(
                 entry.value_as_bool(),
                 Some(true),
@@ -1600,8 +1600,8 @@ After=foo.target
         for input_val in inputs {
             let input = format!("[Service]\nRemainAfterExit={}\n", input_val);
             let unit = SystemdUnit::from_str(&input).unwrap();
-            let section = unit.sections().nth(0).unwrap();
-            let entry = section.entries().nth(0).unwrap();
+            let section = unit.sections().next().unwrap();
+            let entry = section.entries().next().unwrap();
             assert_eq!(
                 entry.value_as_bool(),
                 Some(false),
@@ -1617,8 +1617,8 @@ After=foo.target
 RemainAfterExit=maybe
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
         assert_eq!(entry.value_as_bool(), None);
     }
 
@@ -1628,8 +1628,8 @@ RemainAfterExit=maybe
 RemainAfterExit=  yes
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
-        let entry = section.entries().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
         assert_eq!(entry.value_as_bool(), Some(true));
     }
 
@@ -1646,7 +1646,7 @@ RemainAfterExit=yes
 Type=simple
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
-        let section = unit.sections().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
 
         assert_eq!(section.get_bool("RemainAfterExit"), Some(true));
         assert_eq!(section.get_bool("Type"), None); // Not a boolean
@@ -1660,12 +1660,12 @@ Type=simple
 "#;
         let unit = SystemdUnit::from_str(input).unwrap();
         {
-            let mut section = unit.sections().nth(0).unwrap();
+            let mut section = unit.sections().next().unwrap();
             section.set_bool("RemainAfterExit", true);
             section.set_bool("PrivateTmp", false);
         }
 
-        let section = unit.sections().nth(0).unwrap();
+        let section = unit.sections().next().unwrap();
         assert_eq!(section.get("RemainAfterExit"), Some("yes".to_string()));
         assert_eq!(section.get("PrivateTmp"), Some("no".to_string()));
         assert_eq!(section.get_bool("RemainAfterExit"), Some(true));

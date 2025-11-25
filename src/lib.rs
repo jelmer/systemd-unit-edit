@@ -20,6 +20,9 @@ mod dropin;
 /// Systemd specifier expansion
 pub mod specifier;
 
+/// Systemd time span parsing
+pub mod timespan;
+
 /// Systemd-specific metadata and domain knowledge
 pub mod systemd_metadata;
 
@@ -27,4 +30,5 @@ pub use lex::SyntaxKind;
 pub use parse::Parse;
 pub use rowan::TextRange;
 pub use specifier::SpecifierContext;
+pub use timespan::{parse_timespan, TimespanParseError};
 pub use unit::{Entry, Error, Lang, ParseError, PositionedParseError, Section, SystemdUnit};
