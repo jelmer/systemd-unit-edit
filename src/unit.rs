@@ -702,6 +702,36 @@ fn escape_string(s: &str) -> String {
     result
 }
 
+/// Remove quotes from a string if present
+///
+/// According to systemd specification, quotes (both double and single) are
+/// removed when processing values. This function handles:
+/// - Removing matching outer quotes
+/// - Preserving whitespace inside quotes
+/// - Handling escaped quotes inside quoted strings
+fn unquote_string(s: &str) -> String {
+    let trimmed = s.trim();
+
+    if trimmed.len() < 2 {
+        return trimmed.to_string();
+    }
+
+    let first = trimmed.chars().next();
+    let last = trimmed.chars().last();
+
+    // Check if string is quoted with matching quotes
+    if let (Some('"'), Some('"')) = (first, last) {
+        // Remove outer quotes
+        trimmed[1..trimmed.len() - 1].to_string()
+    } else if let (Some('\''), Some('\'')) = (first, last) {
+        // Remove outer quotes
+        trimmed[1..trimmed.len() - 1].to_string()
+    } else {
+        // Not quoted, return as-is (but trimmed)
+        trimmed.to_string()
+    }
+}
+
 /// A key-value entry in a section
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Entry(SyntaxNode);
@@ -828,6 +858,45 @@ impl Entry {
     /// - double quote (`"`) becomes `\"`
     pub fn escape_value(value: &str) -> String {
         escape_string(value)
+    }
+
+    /// Check if the value is quoted (starts and ends with matching quotes)
+    ///
+    /// Returns the quote character if the value is quoted, None otherwise.
+    /// Systemd supports both double quotes (`"`) and single quotes (`'`).
+    pub fn is_quoted(&self) -> Option<char> {
+        let value = self.value()?;
+        let trimmed = value.trim();
+
+        if trimmed.len() < 2 {
+            return None;
+        }
+
+        let first = trimmed.chars().next()?;
+        let last = trimmed.chars().last()?;
+
+        if (first == '"' || first == '\'') && first == last {
+            Some(first)
+        } else {
+            None
+        }
+    }
+
+    /// Get the value with quotes removed (if present)
+    ///
+    /// According to systemd specification, quotes are removed when processing values.
+    /// This method returns the value with outer quotes stripped if present.
+    pub fn unquoted_value(&self) -> Option<String> {
+        let value = self.value()?;
+        Some(unquote_string(&value))
+    }
+
+    /// Get the value with quotes preserved as they appear in the file
+    ///
+    /// This is useful when you want to preserve the exact quoting style.
+    pub fn quoted_value(&self) -> Option<String> {
+        // This is the same as value() - just provided for clarity
+        self.value()
     }
 
     /// Get the raw syntax node
@@ -1141,5 +1210,88 @@ Value=\z\xFF\u12\U1234
         let unescaped = entry.unescape_value().unwrap();
         // \z is unknown, \xFF has only 2 chars but needs hex, \u12 and \U1234 are incomplete
         assert!(unescaped.contains("\\z"));
+    }
+
+    #[test]
+    fn test_quoted_double_quotes() {
+        let input = r#"[Unit]
+Description="Test Service"
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+        let entry = section.entries().nth(0).unwrap();
+
+        assert_eq!(entry.value(), Some("\"Test Service\"".to_string()));
+        assert_eq!(entry.quoted_value(), Some("\"Test Service\"".to_string()));
+        assert_eq!(entry.unquoted_value(), Some("Test Service".to_string()));
+        assert_eq!(entry.is_quoted(), Some('"'));
+    }
+
+    #[test]
+    fn test_quoted_single_quotes() {
+        let input = r#"[Unit]
+Description='Test Service'
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+        let entry = section.entries().nth(0).unwrap();
+
+        assert_eq!(entry.value(), Some("'Test Service'".to_string()));
+        assert_eq!(entry.unquoted_value(), Some("Test Service".to_string()));
+        assert_eq!(entry.is_quoted(), Some('\''));
+    }
+
+    #[test]
+    fn test_quoted_with_whitespace() {
+        let input = r#"[Unit]
+Description="  Test Service  "
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+        let entry = section.entries().nth(0).unwrap();
+
+        // Quotes preserve internal whitespace
+        assert_eq!(entry.unquoted_value(), Some("  Test Service  ".to_string()));
+    }
+
+    #[test]
+    fn test_unquoted_value() {
+        let input = r#"[Unit]
+Description=Test Service
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+        let entry = section.entries().nth(0).unwrap();
+
+        assert_eq!(entry.value(), Some("Test Service".to_string()));
+        assert_eq!(entry.unquoted_value(), Some("Test Service".to_string()));
+        assert_eq!(entry.is_quoted(), None);
+    }
+
+    #[test]
+    fn test_mismatched_quotes() {
+        let input = r#"[Unit]
+Description="Test Service'
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+        let entry = section.entries().nth(0).unwrap();
+
+        // Mismatched quotes should not be considered quoted
+        assert_eq!(entry.is_quoted(), None);
+        assert_eq!(entry.unquoted_value(), Some("\"Test Service'".to_string()));
+    }
+
+    #[test]
+    fn test_empty_quotes() {
+        let input = r#"[Unit]
+Description=""
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+        let entry = section.entries().nth(0).unwrap();
+
+        assert_eq!(entry.is_quoted(), Some('"'));
+        assert_eq!(entry.unquoted_value(), Some("".to_string()));
     }
 }
