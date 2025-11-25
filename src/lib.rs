@@ -17,10 +17,14 @@ mod unit;
 /// Drop-in directory support
 mod dropin;
 
+/// Systemd specifier expansion
+pub mod specifier;
+
 /// Systemd-specific metadata and domain knowledge
 pub mod systemd_metadata;
 
 pub use lex::SyntaxKind;
 pub use parse::Parse;
 pub use rowan::TextRange;
+pub use specifier::SpecifierContext;
 pub use unit::{Entry, Error, Lang, ParseError, PositionedParseError, Section, SystemdUnit};

@@ -1033,6 +1033,33 @@ impl Entry {
         }
     }
 
+    /// Expand systemd specifiers in the value
+    ///
+    /// This replaces systemd specifiers like `%i`, `%u`, `%h` with their
+    /// values from the provided context.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use systemd_unit_edit::{SystemdUnit, SpecifierContext};
+    /// # use std::str::FromStr;
+    /// let unit = SystemdUnit::from_str("[Service]\nWorkingDirectory=/var/lib/%i\n").unwrap();
+    /// let section = unit.get_section("Service").unwrap();
+    /// let entry = section.entries().nth(0).unwrap();
+    ///
+    /// let mut ctx = SpecifierContext::new();
+    /// ctx.set("i", "myinstance");
+    ///
+    /// assert_eq!(entry.expand_specifiers(&ctx), Some("/var/lib/myinstance".to_string()));
+    /// ```
+    pub fn expand_specifiers(
+        &self,
+        context: &crate::specifier::SpecifierContext,
+    ) -> Option<String> {
+        let value = self.value()?;
+        Some(context.expand(&value))
+    }
+
     /// Get the raw syntax node
     pub fn syntax(&self) -> &SyntaxNode {
         &self.0
