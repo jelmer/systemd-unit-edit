@@ -1,0 +1,13 @@
+[package]
+name = "systemd-unit-edit"
+version = "0.1.0"
+edition = "2021"
+authors = ["Jelmer Vernooĳ <jelmer@debian.org>"]
+license = "Apache-2.0"
+description = "A lossless parser and editor for systemd unit files"
+keywords = ["systemd", "unit", "parser", "lossless"]
+categories = ["parser-implementations"]
+homepage = "https://github.com/jelmer/systemd-unit-edit-rs"
+
+[dependencies]
+rowan = "0.16"
