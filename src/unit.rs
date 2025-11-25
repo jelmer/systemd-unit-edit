@@ -524,6 +524,37 @@ impl Section {
             .splice_children(insertion_index..insertion_index, vec![new_entry.0.into()]);
     }
 
+    /// Set a space-separated list value for a key
+    ///
+    /// This is a convenience method for setting list-type directives
+    /// (e.g., `Wants=`, `After=`). The values will be joined with spaces.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use systemd_unit_edit::SystemdUnit;
+    /// # use std::str::FromStr;
+    /// # let mut unit = SystemdUnit::from_str("[Unit]\n").unwrap();
+    /// # let mut section = unit.get_section("Unit").unwrap();
+    /// section.set_list("Wants", &["foo.service", "bar.service"]);
+    /// // Results in: Wants=foo.service bar.service
+    /// ```
+    pub fn set_list(&mut self, key: &str, values: &[&str]) {
+        let value = values.join(" ");
+        self.set(key, &value);
+    }
+
+    /// Get a value parsed as a space-separated list
+    ///
+    /// This is a convenience method for getting list-type directives.
+    /// If the key doesn't exist, returns an empty vector.
+    pub fn get_list(&self, key: &str) -> Vec<String> {
+        self.entries()
+            .find(|e| e.key().as_deref() == Some(key))
+            .map(|e| e.value_as_list())
+            .unwrap_or_default()
+    }
+
     /// Remove the first entry with the given key
     pub fn remove(&mut self, key: &str) {
         // Find and remove the first entry with the matching key
@@ -897,6 +928,22 @@ impl Entry {
     pub fn quoted_value(&self) -> Option<String> {
         // This is the same as value() - just provided for clarity
         self.value()
+    }
+
+    /// Parse the value as a space-separated list
+    ///
+    /// Many systemd directives use space-separated lists (e.g., `Wants=`,
+    /// `After=`, `Before=`). This method splits the value on whitespace
+    /// and returns a vector of strings.
+    ///
+    /// Empty values return an empty vector.
+    pub fn value_as_list(&self) -> Vec<String> {
+        let value = match self.unquoted_value() {
+            Some(v) => v,
+            None => return Vec::new(),
+        };
+
+        value.split_whitespace().map(|s| s.to_string()).collect()
     }
 
     /// Get the raw syntax node
@@ -1293,5 +1340,124 @@ Description=""
 
         assert_eq!(entry.is_quoted(), Some('"'));
         assert_eq!(entry.unquoted_value(), Some("".to_string()));
+    }
+
+    #[test]
+    fn test_value_as_list() {
+        let input = r#"[Unit]
+After=network.target remote-fs.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+        let entry = section.entries().nth(0).unwrap();
+
+        let list = entry.value_as_list();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0], "network.target");
+        assert_eq!(list[1], "remote-fs.target");
+    }
+
+    #[test]
+    fn test_value_as_list_single() {
+        let input = r#"[Unit]
+After=network.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+        let entry = section.entries().nth(0).unwrap();
+
+        let list = entry.value_as_list();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0], "network.target");
+    }
+
+    #[test]
+    fn test_value_as_list_empty() {
+        let input = r#"[Unit]
+After=
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+        let entry = section.entries().nth(0).unwrap();
+
+        let list = entry.value_as_list();
+        assert_eq!(list.len(), 0);
+    }
+
+    #[test]
+    fn test_value_as_list_with_extra_whitespace() {
+        let input = r#"[Unit]
+After=  network.target   remote-fs.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+        let entry = section.entries().nth(0).unwrap();
+
+        let list = entry.value_as_list();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0], "network.target");
+        assert_eq!(list[1], "remote-fs.target");
+    }
+
+    #[test]
+    fn test_section_get_list() {
+        let input = r#"[Unit]
+After=network.target remote-fs.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+
+        let list = section.get_list("After");
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0], "network.target");
+        assert_eq!(list[1], "remote-fs.target");
+    }
+
+    #[test]
+    fn test_section_get_list_missing() {
+        let input = r#"[Unit]
+Description=Test
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+
+        let list = section.get_list("After");
+        assert_eq!(list.len(), 0);
+    }
+
+    #[test]
+    fn test_section_set_list() {
+        let input = r#"[Unit]
+Description=Test
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().nth(0).unwrap();
+            section.set_list("After", &["network.target", "remote-fs.target"]);
+        }
+
+        let section = unit.sections().nth(0).unwrap();
+        let list = section.get_list("After");
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0], "network.target");
+        assert_eq!(list[1], "remote-fs.target");
+    }
+
+    #[test]
+    fn test_section_set_list_replaces() {
+        let input = r#"[Unit]
+After=foo.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().nth(0).unwrap();
+            section.set_list("After", &["network.target", "remote-fs.target"]);
+        }
+
+        let section = unit.sections().nth(0).unwrap();
+        let list = section.get_list("After");
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0], "network.target");
+        assert_eq!(list[1], "remote-fs.target");
     }
 }
