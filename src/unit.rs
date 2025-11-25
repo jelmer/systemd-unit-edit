@@ -582,6 +582,126 @@ impl AstNode for Section {
     }
 }
 
+/// Unescape a string by processing C-style escape sequences
+fn unescape_string(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some('n') => result.push('\n'),
+                Some('t') => result.push('\t'),
+                Some('r') => result.push('\r'),
+                Some('\\') => result.push('\\'),
+                Some('"') => result.push('"'),
+                Some('\'') => result.push('\''),
+                Some('x') => {
+                    // Hexadecimal byte: \xhh
+                    let hex: String = chars.by_ref().take(2).collect();
+                    if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                        result.push(byte as char);
+                    } else {
+                        // Invalid escape, keep as-is
+                        result.push('\\');
+                        result.push('x');
+                        result.push_str(&hex);
+                    }
+                }
+                Some('u') => {
+                    // Unicode codepoint: \unnnn
+                    let hex: String = chars.by_ref().take(4).collect();
+                    if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                        if let Some(unicode_char) = char::from_u32(code) {
+                            result.push(unicode_char);
+                        } else {
+                            // Invalid codepoint, keep as-is
+                            result.push('\\');
+                            result.push('u');
+                            result.push_str(&hex);
+                        }
+                    } else {
+                        // Invalid escape, keep as-is
+                        result.push('\\');
+                        result.push('u');
+                        result.push_str(&hex);
+                    }
+                }
+                Some('U') => {
+                    // Unicode codepoint: \Unnnnnnnn
+                    let hex: String = chars.by_ref().take(8).collect();
+                    if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                        if let Some(unicode_char) = char::from_u32(code) {
+                            result.push(unicode_char);
+                        } else {
+                            // Invalid codepoint, keep as-is
+                            result.push('\\');
+                            result.push('U');
+                            result.push_str(&hex);
+                        }
+                    } else {
+                        // Invalid escape, keep as-is
+                        result.push('\\');
+                        result.push('U');
+                        result.push_str(&hex);
+                    }
+                }
+                Some(c) if c.is_ascii_digit() => {
+                    // Octal byte: \nnn (up to 3 digits)
+                    let mut octal = String::from(c);
+                    for _ in 0..2 {
+                        if let Some(&next_ch) = chars.peek() {
+                            if next_ch.is_ascii_digit() && next_ch < '8' {
+                                octal.push(chars.next().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    if let Ok(byte) = u8::from_str_radix(&octal, 8) {
+                        result.push(byte as char);
+                    } else {
+                        // Invalid escape, keep as-is
+                        result.push('\\');
+                        result.push_str(&octal);
+                    }
+                }
+                Some(c) => {
+                    // Unknown escape sequence, keep the backslash
+                    result.push('\\');
+                    result.push(c);
+                }
+                None => {
+                    // Backslash at end of string
+                    result.push('\\');
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+
+    result
+}
+
+/// Escape a string for use in systemd unit files
+fn escape_string(s: &str) -> String {
+    let mut result = String::new();
+
+    for ch in s.chars() {
+        match ch {
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\t' => result.push_str("\\t"),
+            '\r' => result.push_str("\\r"),
+            '"' => result.push_str("\\\""),
+            _ => result.push(ch),
+        }
+    }
+
+    result
+}
+
 /// A key-value entry in a section
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Entry(SyntaxNode);
@@ -678,6 +798,36 @@ impl Entry {
         } else {
             Some(value_parts.join(""))
         }
+    }
+
+    /// Get the value with escape sequences processed
+    ///
+    /// This processes C-style escape sequences as defined in the systemd specification:
+    /// - `\n` - newline
+    /// - `\t` - tab
+    /// - `\r` - carriage return
+    /// - `\\` - backslash
+    /// - `\"` - double quote
+    /// - `\'` - single quote
+    /// - `\xhh` - hexadecimal byte (2 digits)
+    /// - `\nnn` - octal byte (3 digits)
+    /// - `\unnnn` - Unicode codepoint (4 hex digits)
+    /// - `\Unnnnnnnn` - Unicode codepoint (8 hex digits)
+    pub fn unescape_value(&self) -> Option<String> {
+        let value = self.value()?;
+        Some(unescape_string(&value))
+    }
+
+    /// Escape a string value for use in systemd unit files
+    ///
+    /// This escapes special characters that need escaping in systemd values:
+    /// - backslash (`\`) becomes `\\`
+    /// - newline (`\n`) becomes `\n`
+    /// - tab (`\t`) becomes `\t`
+    /// - carriage return (`\r`) becomes `\r`
+    /// - double quote (`"`) becomes `\"`
+    pub fn escape_value(value: &str) -> String {
+        escape_string(value)
     }
 
     /// Get the raw syntax node
@@ -918,5 +1068,78 @@ Description=Test
         let section = unit.sections().nth(0).unwrap();
         assert_eq!(section.get_all("Wants").len(), 0);
         assert_eq!(section.get("Description"), Some("Test".to_string()));
+    }
+
+    #[test]
+    fn test_unescape_basic() {
+        let input = r#"[Unit]
+Description=Test\nService
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+        let entry = section.entries().nth(0).unwrap();
+
+        assert_eq!(entry.value(), Some("Test\\nService".to_string()));
+        assert_eq!(entry.unescape_value(), Some("Test\nService".to_string()));
+    }
+
+    #[test]
+    fn test_unescape_all_escapes() {
+        let input = r#"[Unit]
+Value=\n\t\r\\\"\'\x41\101\u0041\U00000041
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+        let entry = section.entries().nth(0).unwrap();
+
+        let unescaped = entry.unescape_value().unwrap();
+        // \n = newline, \t = tab, \r = carriage return, \\ = backslash
+        // \" = quote, \' = single quote
+        // \x41 = 'A', \101 = 'A', \u0041 = 'A', \U00000041 = 'A'
+        assert_eq!(unescaped, "\n\t\r\\\"'AAAA");
+    }
+
+    #[test]
+    fn test_unescape_unicode() {
+        let input = r#"[Unit]
+Value=Hello\u0020World\U0001F44D
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+        let entry = section.entries().nth(0).unwrap();
+
+        let unescaped = entry.unescape_value().unwrap();
+        // \u0020 = space, \U0001F44D = 👍
+        assert_eq!(unescaped, "Hello World👍");
+    }
+
+    #[test]
+    fn test_escape_value() {
+        let text = "Hello\nWorld\t\"Test\"\\Path";
+        let escaped = Entry::escape_value(text);
+        assert_eq!(escaped, "Hello\\nWorld\\t\\\"Test\\\"\\\\Path");
+    }
+
+    #[test]
+    fn test_escape_unescape_roundtrip() {
+        let original = "Test\nwith\ttabs\rand\"quotes\"\\backslash";
+        let escaped = Entry::escape_value(original);
+        let unescaped = unescape_string(&escaped);
+        assert_eq!(original, unescaped);
+    }
+
+    #[test]
+    fn test_unescape_invalid_sequences() {
+        // Invalid escape sequences should be kept as-is or handled gracefully
+        let input = r#"[Unit]
+Value=\z\xFF\u12\U1234
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+        let entry = section.entries().nth(0).unwrap();
+
+        let unescaped = entry.unescape_value().unwrap();
+        // \z is unknown, \xFF has only 2 chars but needs hex, \u12 and \U1234 are incomplete
+        assert!(unescaped.contains("\\z"));
     }
 }
