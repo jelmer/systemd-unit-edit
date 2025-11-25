@@ -555,6 +555,43 @@ impl Section {
             .unwrap_or_default()
     }
 
+    /// Get a value parsed as a boolean
+    ///
+    /// Returns `None` if the key doesn't exist or if the value is not a valid boolean.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use systemd_unit_edit::SystemdUnit;
+    /// # use std::str::FromStr;
+    /// let unit = SystemdUnit::from_str("[Service]\nRemainAfterExit=yes\n").unwrap();
+    /// let section = unit.get_section("Service").unwrap();
+    /// assert_eq!(section.get_bool("RemainAfterExit"), Some(true));
+    /// ```
+    pub fn get_bool(&self, key: &str) -> Option<bool> {
+        self.entries()
+            .find(|e| e.key().as_deref() == Some(key))
+            .and_then(|e| e.value_as_bool())
+    }
+
+    /// Set a boolean value for a key
+    ///
+    /// This is a convenience method that formats the boolean as "yes" or "no".
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use systemd_unit_edit::SystemdUnit;
+    /// # use std::str::FromStr;
+    /// let unit = SystemdUnit::from_str("[Service]\n").unwrap();
+    /// let mut section = unit.get_section("Service").unwrap();
+    /// section.set_bool("RemainAfterExit", true);
+    /// assert_eq!(section.get("RemainAfterExit"), Some("yes".to_string()));
+    /// ```
+    pub fn set_bool(&mut self, key: &str, value: bool) {
+        self.set(key, Entry::format_bool(value));
+    }
+
     /// Remove the first entry with the given key
     pub fn remove(&mut self, key: &str) {
         // Find and remove the first entry with the matching key
@@ -944,6 +981,56 @@ impl Entry {
         };
 
         value.split_whitespace().map(|s| s.to_string()).collect()
+    }
+
+    /// Parse the value as a boolean
+    ///
+    /// According to systemd specification, boolean values accept:
+    /// - Positive: `1`, `yes`, `true`, `on`
+    /// - Negative: `0`, `no`, `false`, `off`
+    ///
+    /// Returns `None` if the value is not a valid boolean or if the entry has no value.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use systemd_unit_edit::SystemdUnit;
+    /// # use std::str::FromStr;
+    /// let unit = SystemdUnit::from_str("[Service]\nRemainAfterExit=yes\n").unwrap();
+    /// let section = unit.get_section("Service").unwrap();
+    /// let entry = section.entries().nth(0).unwrap();
+    /// assert_eq!(entry.value_as_bool(), Some(true));
+    /// ```
+    pub fn value_as_bool(&self) -> Option<bool> {
+        let value = self.unquoted_value()?;
+        let value_lower = value.trim().to_lowercase();
+
+        match value_lower.as_str() {
+            "1" | "yes" | "true" | "on" => Some(true),
+            "0" | "no" | "false" | "off" => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Format a boolean value for use in systemd unit files
+    ///
+    /// This converts a boolean to the canonical systemd format:
+    /// - `true` becomes `"yes"`
+    /// - `false` becomes `"no"`
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use systemd_unit_edit::Entry;
+    /// assert_eq!(Entry::format_bool(true), "yes");
+    /// assert_eq!(Entry::format_bool(false), "no");
+    /// ```
+    pub fn format_bool(value: bool) -> &'static str {
+        if value {
+            "yes"
+        } else {
+            "no"
+        }
     }
 
     /// Get the raw syntax node
@@ -1459,5 +1546,102 @@ After=foo.target
         assert_eq!(list.len(), 2);
         assert_eq!(list[0], "network.target");
         assert_eq!(list[1], "remote-fs.target");
+    }
+
+    #[test]
+    fn test_value_as_bool_positive() {
+        let inputs = vec!["yes", "true", "1", "on", "YES", "True", "ON"];
+
+        for input_val in inputs {
+            let input = format!("[Service]\nRemainAfterExit={}\n", input_val);
+            let unit = SystemdUnit::from_str(&input).unwrap();
+            let section = unit.sections().nth(0).unwrap();
+            let entry = section.entries().nth(0).unwrap();
+            assert_eq!(
+                entry.value_as_bool(),
+                Some(true),
+                "Failed for input: {}",
+                input_val
+            );
+        }
+    }
+
+    #[test]
+    fn test_value_as_bool_negative() {
+        let inputs = vec!["no", "false", "0", "off", "NO", "False", "OFF"];
+
+        for input_val in inputs {
+            let input = format!("[Service]\nRemainAfterExit={}\n", input_val);
+            let unit = SystemdUnit::from_str(&input).unwrap();
+            let section = unit.sections().nth(0).unwrap();
+            let entry = section.entries().nth(0).unwrap();
+            assert_eq!(
+                entry.value_as_bool(),
+                Some(false),
+                "Failed for input: {}",
+                input_val
+            );
+        }
+    }
+
+    #[test]
+    fn test_value_as_bool_invalid() {
+        let input = r#"[Service]
+RemainAfterExit=maybe
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+        let entry = section.entries().nth(0).unwrap();
+        assert_eq!(entry.value_as_bool(), None);
+    }
+
+    #[test]
+    fn test_value_as_bool_with_whitespace() {
+        let input = r#"[Service]
+RemainAfterExit=  yes
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+        let entry = section.entries().nth(0).unwrap();
+        assert_eq!(entry.value_as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_format_bool() {
+        assert_eq!(Entry::format_bool(true), "yes");
+        assert_eq!(Entry::format_bool(false), "no");
+    }
+
+    #[test]
+    fn test_section_get_bool() {
+        let input = r#"[Service]
+RemainAfterExit=yes
+Type=simple
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        let section = unit.sections().nth(0).unwrap();
+
+        assert_eq!(section.get_bool("RemainAfterExit"), Some(true));
+        assert_eq!(section.get_bool("Type"), None); // Not a boolean
+        assert_eq!(section.get_bool("Missing"), None); // Doesn't exist
+    }
+
+    #[test]
+    fn test_section_set_bool() {
+        let input = r#"[Service]
+Type=simple
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().nth(0).unwrap();
+            section.set_bool("RemainAfterExit", true);
+            section.set_bool("PrivateTmp", false);
+        }
+
+        let section = unit.sections().nth(0).unwrap();
+        assert_eq!(section.get("RemainAfterExit"), Some("yes".to_string()));
+        assert_eq!(section.get("PrivateTmp"), Some("no".to_string()));
+        assert_eq!(section.get_bool("RemainAfterExit"), Some(true));
+        assert_eq!(section.get_bool("PrivateTmp"), Some(false));
     }
 }
