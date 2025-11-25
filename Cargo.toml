@@ -7,7 +7,7 @@ license = "Apache-2.0"
 description = "A lossless parser and editor for systemd unit files"
 keywords = ["systemd", "unit", "parser", "lossless"]
 categories = ["parser-implementations"]
-homepage = "https://github.com/jelmer/systemd-unit-edit-rs"
+homepage = "https://github.com/jelmer/systemd-unit-edit"
 
 [dependencies]
 rowan = "0.16"
