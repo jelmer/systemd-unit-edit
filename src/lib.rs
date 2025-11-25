@@ -14,6 +14,12 @@ mod lex;
 mod parse;
 mod unit;
 
+/// Drop-in directory support
+mod dropin;
+
+/// Systemd-specific metadata and domain knowledge
+pub mod systemd_metadata;
+
 pub use lex::SyntaxKind;
 pub use parse::Parse;
 pub use rowan::TextRange;
