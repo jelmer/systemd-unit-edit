@@ -550,6 +550,132 @@ impl Section {
             .splice_children(insertion_index..insertion_index, vec![new_entry.0.into()]);
     }
 
+    /// Insert a value at a specific position (index is among entries only, not all nodes)
+    ///
+    /// If the index is greater than or equal to the number of entries, the entry
+    /// will be appended at the end.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use systemd_unit_edit::SystemdUnit;
+    /// # use std::str::FromStr;
+    /// let input = r#"[Unit]
+    /// Description=Test Service
+    /// After=network.target
+    /// "#;
+    /// let unit = SystemdUnit::from_str(input).unwrap();
+    /// {
+    ///     let mut section = unit.get_section("Unit").unwrap();
+    ///     section.insert_at(1, "Wants", "foo.service");
+    /// }
+    ///
+    /// let section = unit.get_section("Unit").unwrap();
+    /// let entries: Vec<_> = section.entries().collect();
+    /// assert_eq!(entries[0].key(), Some("Description".to_string()));
+    /// assert_eq!(entries[1].key(), Some("Wants".to_string()));
+    /// assert_eq!(entries[2].key(), Some("After".to_string()));
+    /// ```
+    pub fn insert_at(&mut self, index: usize, key: &str, value: &str) {
+        let new_entry = Entry::new(key, value);
+
+        // Find the insertion point by counting entries
+        let entries: Vec<_> = self.entries().collect();
+
+        if index >= entries.len() {
+            // If index is beyond the end, just append
+            self.add(key, value);
+        } else {
+            // Insert at the specified entry position
+            let target_entry = &entries[index];
+            let insertion_index = target_entry.0.index();
+            self.0
+                .splice_children(insertion_index..insertion_index, vec![new_entry.0.into()]);
+        }
+    }
+
+    /// Insert a value before the first entry with the specified key
+    ///
+    /// If no entry with the specified key exists, this method does nothing.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use systemd_unit_edit::SystemdUnit;
+    /// # use std::str::FromStr;
+    /// let input = r#"[Unit]
+    /// Description=Test Service
+    /// After=network.target
+    /// "#;
+    /// let unit = SystemdUnit::from_str(input).unwrap();
+    /// {
+    ///     let mut section = unit.get_section("Unit").unwrap();
+    ///     section.insert_before("After", "Wants", "foo.service");
+    /// }
+    ///
+    /// let section = unit.get_section("Unit").unwrap();
+    /// let entries: Vec<_> = section.entries().collect();
+    /// assert_eq!(entries[0].key(), Some("Description".to_string()));
+    /// assert_eq!(entries[1].key(), Some("Wants".to_string()));
+    /// assert_eq!(entries[2].key(), Some("After".to_string()));
+    /// ```
+    pub fn insert_before(&mut self, existing_key: &str, key: &str, value: &str) {
+        let new_entry = Entry::new(key, value);
+
+        // Find the first entry with the matching key
+        let target_entry = self
+            .entries()
+            .find(|e| e.key().as_deref() == Some(existing_key));
+
+        if let Some(entry) = target_entry {
+            let insertion_index = entry.0.index();
+            self.0
+                .splice_children(insertion_index..insertion_index, vec![new_entry.0.into()]);
+        }
+        // If the key doesn't exist, do nothing
+    }
+
+    /// Insert a value after the first entry with the specified key
+    ///
+    /// If no entry with the specified key exists, this method does nothing.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use systemd_unit_edit::SystemdUnit;
+    /// # use std::str::FromStr;
+    /// let input = r#"[Unit]
+    /// Description=Test Service
+    /// After=network.target
+    /// "#;
+    /// let unit = SystemdUnit::from_str(input).unwrap();
+    /// {
+    ///     let mut section = unit.get_section("Unit").unwrap();
+    ///     section.insert_after("Description", "Wants", "foo.service");
+    /// }
+    ///
+    /// let section = unit.get_section("Unit").unwrap();
+    /// let entries: Vec<_> = section.entries().collect();
+    /// assert_eq!(entries[0].key(), Some("Description".to_string()));
+    /// assert_eq!(entries[1].key(), Some("Wants".to_string()));
+    /// assert_eq!(entries[2].key(), Some("After".to_string()));
+    /// ```
+    pub fn insert_after(&mut self, existing_key: &str, key: &str, value: &str) {
+        let new_entry = Entry::new(key, value);
+
+        // Find the first entry with the matching key
+        let target_entry = self
+            .entries()
+            .find(|e| e.key().as_deref() == Some(existing_key));
+
+        if let Some(entry) = target_entry {
+            let insertion_index = entry.0.index() + 1;
+            self.0
+                .splice_children(insertion_index..insertion_index, vec![new_entry.0.into()]);
+        }
+        // If the key doesn't exist, do nothing
+    }
+
     /// Set a space-separated list value for a key
     ///
     /// This is a convenience method for setting list-type directives
@@ -2253,5 +2379,292 @@ Requires=bar.service
         assert_eq!(all_after.len(), 2);
         assert_eq!(all_after[0], "network.target");
         assert_eq!(all_after[1], "multi-user.target");
+    }
+
+    #[test]
+    fn test_insert_at_beginning() {
+        let input = r#"[Unit]
+Description=Test Service
+After=network.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.insert_at(0, "Wants", "foo.service");
+        }
+
+        let section = unit.sections().next().unwrap();
+        let entries: Vec<_> = section.entries().collect();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].key(), Some("Wants".to_string()));
+        assert_eq!(entries[0].value(), Some("foo.service".to_string()));
+        assert_eq!(entries[1].key(), Some("Description".to_string()));
+        assert_eq!(entries[2].key(), Some("After".to_string()));
+    }
+
+    #[test]
+    fn test_insert_at_middle() {
+        let input = r#"[Unit]
+Description=Test Service
+After=network.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.insert_at(1, "Wants", "foo.service");
+        }
+
+        let section = unit.sections().next().unwrap();
+        let entries: Vec<_> = section.entries().collect();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].key(), Some("Description".to_string()));
+        assert_eq!(entries[1].key(), Some("Wants".to_string()));
+        assert_eq!(entries[1].value(), Some("foo.service".to_string()));
+        assert_eq!(entries[2].key(), Some("After".to_string()));
+    }
+
+    #[test]
+    fn test_insert_at_end() {
+        let input = r#"[Unit]
+Description=Test Service
+After=network.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.insert_at(2, "Wants", "foo.service");
+        }
+
+        let section = unit.sections().next().unwrap();
+        let entries: Vec<_> = section.entries().collect();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].key(), Some("Description".to_string()));
+        assert_eq!(entries[1].key(), Some("After".to_string()));
+        assert_eq!(entries[2].key(), Some("Wants".to_string()));
+        assert_eq!(entries[2].value(), Some("foo.service".to_string()));
+    }
+
+    #[test]
+    fn test_insert_at_beyond_end() {
+        let input = r#"[Unit]
+Description=Test Service
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.insert_at(100, "Wants", "foo.service");
+        }
+
+        let section = unit.sections().next().unwrap();
+        let entries: Vec<_> = section.entries().collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].key(), Some("Description".to_string()));
+        assert_eq!(entries[1].key(), Some("Wants".to_string()));
+        assert_eq!(entries[1].value(), Some("foo.service".to_string()));
+    }
+
+    #[test]
+    fn test_insert_at_empty_section() {
+        let input = r#"[Unit]
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.insert_at(0, "Description", "Test Service");
+        }
+
+        let section = unit.sections().next().unwrap();
+        assert_eq!(section.get("Description"), Some("Test Service".to_string()));
+    }
+
+    #[test]
+    fn test_insert_before_basic() {
+        let input = r#"[Unit]
+Description=Test Service
+After=network.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.insert_before("After", "Wants", "foo.service");
+        }
+
+        let section = unit.sections().next().unwrap();
+        let entries: Vec<_> = section.entries().collect();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].key(), Some("Description".to_string()));
+        assert_eq!(entries[1].key(), Some("Wants".to_string()));
+        assert_eq!(entries[1].value(), Some("foo.service".to_string()));
+        assert_eq!(entries[2].key(), Some("After".to_string()));
+    }
+
+    #[test]
+    fn test_insert_before_first_entry() {
+        let input = r#"[Unit]
+Description=Test Service
+After=network.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.insert_before("Description", "Wants", "foo.service");
+        }
+
+        let section = unit.sections().next().unwrap();
+        let entries: Vec<_> = section.entries().collect();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].key(), Some("Wants".to_string()));
+        assert_eq!(entries[0].value(), Some("foo.service".to_string()));
+        assert_eq!(entries[1].key(), Some("Description".to_string()));
+        assert_eq!(entries[2].key(), Some("After".to_string()));
+    }
+
+    #[test]
+    fn test_insert_before_nonexistent_key() {
+        let input = r#"[Unit]
+Description=Test Service
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.insert_before("After", "Wants", "foo.service");
+        }
+
+        let section = unit.sections().next().unwrap();
+        let entries: Vec<_> = section.entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key(), Some("Description".to_string()));
+    }
+
+    #[test]
+    fn test_insert_before_multiple_occurrences() {
+        let input = r#"[Unit]
+After=network.target
+After=syslog.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.insert_before("After", "Wants", "foo.service");
+        }
+
+        let section = unit.sections().next().unwrap();
+        let entries: Vec<_> = section.entries().collect();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].key(), Some("Wants".to_string()));
+        assert_eq!(entries[1].key(), Some("After".to_string()));
+        assert_eq!(entries[1].value(), Some("network.target".to_string()));
+        assert_eq!(entries[2].key(), Some("After".to_string()));
+        assert_eq!(entries[2].value(), Some("syslog.target".to_string()));
+    }
+
+    #[test]
+    fn test_insert_after_basic() {
+        let input = r#"[Unit]
+Description=Test Service
+After=network.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.insert_after("Description", "Wants", "foo.service");
+        }
+
+        let section = unit.sections().next().unwrap();
+        let entries: Vec<_> = section.entries().collect();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].key(), Some("Description".to_string()));
+        assert_eq!(entries[1].key(), Some("Wants".to_string()));
+        assert_eq!(entries[1].value(), Some("foo.service".to_string()));
+        assert_eq!(entries[2].key(), Some("After".to_string()));
+    }
+
+    #[test]
+    fn test_insert_after_last_entry() {
+        let input = r#"[Unit]
+Description=Test Service
+After=network.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.insert_after("After", "Wants", "foo.service");
+        }
+
+        let section = unit.sections().next().unwrap();
+        let entries: Vec<_> = section.entries().collect();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].key(), Some("Description".to_string()));
+        assert_eq!(entries[1].key(), Some("After".to_string()));
+        assert_eq!(entries[2].key(), Some("Wants".to_string()));
+        assert_eq!(entries[2].value(), Some("foo.service".to_string()));
+    }
+
+    #[test]
+    fn test_insert_after_nonexistent_key() {
+        let input = r#"[Unit]
+Description=Test Service
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.insert_after("After", "Wants", "foo.service");
+        }
+
+        let section = unit.sections().next().unwrap();
+        let entries: Vec<_> = section.entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key(), Some("Description".to_string()));
+    }
+
+    #[test]
+    fn test_insert_after_multiple_occurrences() {
+        let input = r#"[Unit]
+After=network.target
+After=syslog.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.insert_after("After", "Wants", "foo.service");
+        }
+
+        let section = unit.sections().next().unwrap();
+        let entries: Vec<_> = section.entries().collect();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].key(), Some("After".to_string()));
+        assert_eq!(entries[0].value(), Some("network.target".to_string()));
+        assert_eq!(entries[1].key(), Some("Wants".to_string()));
+        assert_eq!(entries[2].key(), Some("After".to_string()));
+        assert_eq!(entries[2].value(), Some("syslog.target".to_string()));
+    }
+
+    #[test]
+    fn test_insert_preserves_whitespace() {
+        let input = r#"[Unit]
+Description=Test Service
+
+After=network.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.insert_at(1, "Wants", "foo.service");
+        }
+
+        let section = unit.sections().next().unwrap();
+        let entries: Vec<_> = section.entries().collect();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].key(), Some("Description".to_string()));
+        assert_eq!(entries[1].key(), Some("Wants".to_string()));
+        assert_eq!(entries[2].key(), Some("After".to_string()));
+
+        let expected = r#"[Unit]
+Description=Test Service
+
+Wants=foo.service
+After=network.target
+"#;
+        assert_eq!(unit.text(), expected);
     }
 }
