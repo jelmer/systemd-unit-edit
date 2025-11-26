@@ -650,6 +650,68 @@ impl Section {
         }
     }
 
+    /// Remove a specific value from entries with the given key
+    ///
+    /// This is useful for multi-value fields like `After=`, `Wants=`, etc.
+    /// It handles space-separated values within a single entry and removes
+    /// entire entries if they only contain the target value.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use systemd_unit_edit::SystemdUnit;
+    /// # use std::str::FromStr;
+    /// let input = r#"[Unit]
+    /// After=network.target syslog.target
+    /// After=remote-fs.target
+    /// "#;
+    /// let unit = SystemdUnit::from_str(input).unwrap();
+    /// {
+    ///     let mut section = unit.sections().next().unwrap();
+    ///     section.remove_value("After", "syslog.target");
+    /// }
+    ///
+    /// let section = unit.sections().next().unwrap();
+    /// let all_after = section.get_all("After");
+    /// assert_eq!(all_after.len(), 2);
+    /// assert_eq!(all_after[0], "network.target");
+    /// assert_eq!(all_after[1], "remote-fs.target");
+    /// ```
+    pub fn remove_value(&mut self, key: &str, value_to_remove: &str) {
+        // Collect all entries with the matching key
+        let entries_to_process: Vec<_> = self
+            .entries()
+            .filter(|e| e.key().as_deref() == Some(key))
+            .collect();
+
+        for entry in entries_to_process {
+            // Get the current value as a list
+            let current_list = entry.value_as_list();
+
+            // Filter out the target value
+            let new_list: Vec<_> = current_list
+                .iter()
+                .filter(|v| v.as_str() != value_to_remove)
+                .map(|s| s.as_str())
+                .collect();
+
+            if new_list.is_empty() {
+                // Remove the entire entry if no values remain
+                entry.syntax().detach();
+            } else if new_list.len() < current_list.len() {
+                // Some values were removed but some remain
+                // Create a new entry with the filtered values
+                let new_entry = Entry::new(key, &new_list.join(" "));
+
+                // Replace the old entry with the new one
+                let index = entry.0.index();
+                self.0
+                    .splice_children(index..index + 1, vec![new_entry.0.into()]);
+            }
+            // else: the value wasn't found in this entry, no change needed
+        }
+    }
+
     /// Get the raw syntax node
     pub fn syntax(&self) -> &SyntaxNode {
         &self.0
@@ -1742,5 +1804,125 @@ After=network.target
 
 "#;
         assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn test_remove_value_from_space_separated_list() {
+        let input = r#"[Unit]
+After=network.target syslog.target remote-fs.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.remove_value("After", "syslog.target");
+        }
+
+        let section = unit.sections().next().unwrap();
+        assert_eq!(
+            section.get("After"),
+            Some("network.target remote-fs.target".to_string())
+        );
+    }
+
+    #[test]
+    fn test_remove_value_removes_entire_entry() {
+        let input = r#"[Unit]
+After=syslog.target
+Description=Test
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.remove_value("After", "syslog.target");
+        }
+
+        let section = unit.sections().next().unwrap();
+        assert_eq!(section.get("After"), None);
+        assert_eq!(section.get("Description"), Some("Test".to_string()));
+    }
+
+    #[test]
+    fn test_remove_value_from_multiple_entries() {
+        let input = r#"[Unit]
+After=network.target syslog.target
+After=remote-fs.target
+After=syslog.target multi-user.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.remove_value("After", "syslog.target");
+        }
+
+        let section = unit.sections().next().unwrap();
+        let all_after = section.get_all("After");
+        assert_eq!(all_after.len(), 3);
+        assert_eq!(all_after[0], "network.target");
+        assert_eq!(all_after[1], "remote-fs.target");
+        assert_eq!(all_after[2], "multi-user.target");
+    }
+
+    #[test]
+    fn test_remove_value_not_found() {
+        let input = r#"[Unit]
+After=network.target remote-fs.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.remove_value("After", "nonexistent.target");
+        }
+
+        let section = unit.sections().next().unwrap();
+        // Should remain unchanged
+        assert_eq!(
+            section.get("After"),
+            Some("network.target remote-fs.target".to_string())
+        );
+    }
+
+    #[test]
+    fn test_remove_value_preserves_order() {
+        let input = r#"[Unit]
+Description=Test Service
+After=network.target syslog.target
+Wants=foo.service
+After=remote-fs.target
+Requires=bar.service
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.remove_value("After", "syslog.target");
+        }
+
+        let section = unit.sections().next().unwrap();
+        let entries: Vec<_> = section.entries().collect();
+
+        // Verify order is preserved
+        assert_eq!(entries[0].key(), Some("Description".to_string()));
+        assert_eq!(entries[1].key(), Some("After".to_string()));
+        assert_eq!(entries[1].value(), Some("network.target".to_string()));
+        assert_eq!(entries[2].key(), Some("Wants".to_string()));
+        assert_eq!(entries[3].key(), Some("After".to_string()));
+        assert_eq!(entries[3].value(), Some("remote-fs.target".to_string()));
+        assert_eq!(entries[4].key(), Some("Requires".to_string()));
+    }
+
+    #[test]
+    fn test_remove_value_key_not_found() {
+        let input = r#"[Unit]
+Description=Test Service
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.remove_value("After", "network.target");
+        }
+
+        // Should not panic or error, just no-op
+        let section = unit.sections().next().unwrap();
+        assert_eq!(section.get("Description"), Some("Test Service".to_string()));
+        assert_eq!(section.get("After"), None);
     }
 }
