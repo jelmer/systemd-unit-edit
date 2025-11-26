@@ -712,6 +712,57 @@ impl Section {
         }
     }
 
+    /// Remove entries matching a predicate
+    ///
+    /// This provides a flexible way to remove entries based on arbitrary conditions.
+    /// The predicate receives the entry's key and value and should return `true` for
+    /// entries that should be removed.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use systemd_unit_edit::SystemdUnit;
+    /// # use std::str::FromStr;
+    /// let input = r#"[Unit]
+    /// After=network.target syslog.target
+    /// Wants=foo.service
+    /// After=remote-fs.target
+    /// "#;
+    /// let unit = SystemdUnit::from_str(input).unwrap();
+    /// {
+    ///     let mut section = unit.sections().next().unwrap();
+    ///     section.remove_entries_where(|key, value| {
+    ///         key == "After" && value.split_whitespace().any(|v| v == "syslog.target")
+    ///     });
+    /// }
+    ///
+    /// let section = unit.sections().next().unwrap();
+    /// let all_after = section.get_all("After");
+    /// assert_eq!(all_after.len(), 1);
+    /// assert_eq!(all_after[0], "remote-fs.target");
+    /// assert_eq!(section.get("Wants"), Some("foo.service".to_string()));
+    /// ```
+    pub fn remove_entries_where<F>(&mut self, mut predicate: F)
+    where
+        F: FnMut(&str, &str) -> bool,
+    {
+        // Collect all entries to remove first (can't mutate while iterating)
+        let entries_to_remove: Vec<_> = self
+            .entries()
+            .filter(|entry| {
+                if let (Some(key), Some(value)) = (entry.key(), entry.value()) {
+                    predicate(&key, &value)
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        for entry in entries_to_remove {
+            entry.syntax().detach();
+        }
+    }
+
     /// Get the raw syntax node
     pub fn syntax(&self) -> &SyntaxNode {
         &self.0
@@ -2074,5 +2125,133 @@ After=network.target
 
         let section = unit.get_section("Unit").unwrap();
         assert_eq!(section.get("After"), Some("".to_string()));
+    }
+
+    #[test]
+    fn test_remove_entries_where_basic() {
+        let input = r#"[Unit]
+After=network.target
+Wants=foo.service
+After=syslog.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.remove_entries_where(|key, _value| key == "After");
+        }
+
+        let section = unit.sections().next().unwrap();
+        assert_eq!(section.get_all("After").len(), 0);
+        assert_eq!(section.get("Wants"), Some("foo.service".to_string()));
+    }
+
+    #[test]
+    fn test_remove_entries_where_with_value_check() {
+        let input = r#"[Unit]
+After=network.target syslog.target
+Wants=foo.service
+After=remote-fs.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.remove_entries_where(|key, value| {
+                key == "After" && value.split_whitespace().any(|v| v == "syslog.target")
+            });
+        }
+
+        let section = unit.sections().next().unwrap();
+        let all_after = section.get_all("After");
+        assert_eq!(all_after.len(), 1);
+        assert_eq!(all_after[0], "remote-fs.target");
+        assert_eq!(section.get("Wants"), Some("foo.service".to_string()));
+    }
+
+    #[test]
+    fn test_remove_entries_where_preserves_order() {
+        let input = r#"[Unit]
+Description=Test Service
+After=network.target
+Wants=foo.service
+After=syslog.target
+Requires=bar.service
+After=remote-fs.target
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.remove_entries_where(|key, value| key == "After" && value.contains("syslog"));
+        }
+
+        let section = unit.sections().next().unwrap();
+        let entries: Vec<_> = section.entries().collect();
+
+        assert_eq!(entries.len(), 5);
+        assert_eq!(entries[0].key(), Some("Description".to_string()));
+        assert_eq!(entries[1].key(), Some("After".to_string()));
+        assert_eq!(entries[1].value(), Some("network.target".to_string()));
+        assert_eq!(entries[2].key(), Some("Wants".to_string()));
+        assert_eq!(entries[3].key(), Some("Requires".to_string()));
+        assert_eq!(entries[4].key(), Some("After".to_string()));
+        assert_eq!(entries[4].value(), Some("remote-fs.target".to_string()));
+    }
+
+    #[test]
+    fn test_remove_entries_where_no_matches() {
+        let input = r#"[Unit]
+After=network.target
+Wants=foo.service
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.remove_entries_where(|key, _value| key == "Requires");
+        }
+
+        let section = unit.sections().next().unwrap();
+        assert_eq!(section.get("After"), Some("network.target".to_string()));
+        assert_eq!(section.get("Wants"), Some("foo.service".to_string()));
+    }
+
+    #[test]
+    fn test_remove_entries_where_all_entries() {
+        let input = r#"[Unit]
+After=network.target
+Wants=foo.service
+Requires=bar.service
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            section.remove_entries_where(|_key, _value| true);
+        }
+
+        let section = unit.sections().next().unwrap();
+        assert_eq!(section.entries().count(), 0);
+    }
+
+    #[test]
+    fn test_remove_entries_where_complex_predicate() {
+        let input = r#"[Unit]
+After=network.target
+After=syslog.target remote-fs.target
+Wants=foo.service
+After=multi-user.target
+Requires=bar.service
+"#;
+        let unit = SystemdUnit::from_str(input).unwrap();
+        {
+            let mut section = unit.sections().next().unwrap();
+            // Remove After entries with multiple space-separated values
+            section.remove_entries_where(|key, value| {
+                key == "After" && value.split_whitespace().count() > 1
+            });
+        }
+
+        let section = unit.sections().next().unwrap();
+        let all_after = section.get_all("After");
+        assert_eq!(all_after.len(), 2);
+        assert_eq!(all_after[0], "network.target");
+        assert_eq!(all_after[1], "multi-user.target");
     }
 }
