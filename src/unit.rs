@@ -354,6 +354,32 @@ pub(crate) fn parse(text: &str) -> ParseResult {
 // Type aliases for convenience
 type SyntaxNode = rowan::SyntaxNode<Lang>;
 
+/// Calculate line and column (both 0-indexed) for the given offset in the tree.
+/// Column is measured in bytes from the start of the line.
+fn line_col_at_offset(node: &SyntaxNode, offset: rowan::TextSize) -> (usize, usize) {
+    let root = node.ancestors().last().unwrap_or_else(|| node.clone());
+    let mut line = 0;
+    let mut last_newline_offset = rowan::TextSize::from(0);
+
+    for element in root.preorder_with_tokens() {
+        if let rowan::WalkEvent::Enter(rowan::NodeOrToken::Token(token)) = element {
+            if token.text_range().start() >= offset {
+                break;
+            }
+
+            // Count newlines and track position of last one
+            for (idx, _) in token.text().match_indices('\n') {
+                line += 1;
+                last_newline_offset =
+                    token.text_range().start() + rowan::TextSize::from((idx + 1) as u32);
+            }
+        }
+    }
+
+    let column: usize = (offset - last_newline_offset).into();
+    (line, column)
+}
+
 /// The root of a systemd unit file
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SystemdUnit(SyntaxNode);
@@ -397,6 +423,22 @@ impl SystemdUnit {
     pub fn write_to_file(&self, path: &Path) -> Result<(), Error> {
         std::fs::write(path, self.text())?;
         Ok(())
+    }
+
+    /// Get the line number (0-indexed) where this node starts.
+    pub fn line(&self) -> usize {
+        line_col_at_offset(&self.0, self.0.text_range().start()).0
+    }
+
+    /// Get the column number (0-indexed, in bytes) where this node starts.
+    pub fn column(&self) -> usize {
+        line_col_at_offset(&self.0, self.0.text_range().start()).1
+    }
+
+    /// Get both line and column (0-indexed) where this node starts.
+    /// Returns (line, column) where column is measured in bytes from the start of the line.
+    pub fn line_col(&self) -> (usize, usize) {
+        line_col_at_offset(&self.0, self.0.text_range().start())
     }
 }
 
@@ -893,6 +935,22 @@ impl Section {
     pub fn syntax(&self) -> &SyntaxNode {
         &self.0
     }
+
+    /// Get the line number (0-indexed) where this node starts.
+    pub fn line(&self) -> usize {
+        line_col_at_offset(&self.0, self.0.text_range().start()).0
+    }
+
+    /// Get the column number (0-indexed, in bytes) where this node starts.
+    pub fn column(&self) -> usize {
+        line_col_at_offset(&self.0, self.0.text_range().start()).1
+    }
+
+    /// Get both line and column (0-indexed) where this node starts.
+    /// Returns (line, column) where column is measured in bytes from the start of the line.
+    pub fn line_col(&self) -> (usize, usize) {
+        line_col_at_offset(&self.0, self.0.text_range().start())
+    }
 }
 
 impl AstNode for Section {
@@ -1371,6 +1429,22 @@ impl Entry {
     /// Get the raw syntax node
     pub fn syntax(&self) -> &SyntaxNode {
         &self.0
+    }
+
+    /// Get the line number (0-indexed) where this node starts.
+    pub fn line(&self) -> usize {
+        line_col_at_offset(&self.0, self.0.text_range().start()).0
+    }
+
+    /// Get the column number (0-indexed, in bytes) where this node starts.
+    pub fn column(&self) -> usize {
+        line_col_at_offset(&self.0, self.0.text_range().start()).1
+    }
+
+    /// Get both line and column (0-indexed) where this node starts.
+    /// Returns (line, column) where column is measured in bytes from the start of the line.
+    pub fn line_col(&self) -> (usize, usize) {
+        line_col_at_offset(&self.0, self.0.text_range().start())
     }
 }
 
@@ -2666,5 +2740,82 @@ Wants=foo.service
 After=network.target
 "#;
         assert_eq!(unit.text(), expected);
+    }
+
+    #[test]
+    fn test_line_col() {
+        let text = r#"[Unit]
+Description=Test Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/test
+Environment="FOO=bar"
+"#;
+        let unit = SystemdUnit::from_str(text).unwrap();
+
+        // Test SystemdUnit line numbers (should start at line 0)
+        assert_eq!(unit.line(), 0);
+        assert_eq!(unit.column(), 0);
+        assert_eq!(unit.line_col(), (0, 0));
+
+        // Test section line numbers
+        let sections: Vec<_> = unit.sections().collect();
+        assert_eq!(sections.len(), 2);
+
+        // First section [Unit] starts at line 0
+        assert_eq!(sections[0].line(), 0);
+        assert_eq!(sections[0].column(), 0);
+        assert_eq!(sections[0].line_col(), (0, 0));
+
+        // Second section [Service] starts at line 4 (after the empty line)
+        assert_eq!(sections[1].line(), 4);
+        assert_eq!(sections[1].column(), 0);
+        assert_eq!(sections[1].line_col(), (4, 0));
+
+        // Test entry line numbers
+        let unit_entries: Vec<_> = sections[0].entries().collect();
+        assert_eq!(unit_entries.len(), 2);
+        assert_eq!(unit_entries[0].line(), 1); // Description=Test Service
+        assert_eq!(unit_entries[0].column(), 0); // Start of line
+        assert_eq!(unit_entries[1].line(), 2); // After=network.target
+        assert_eq!(unit_entries[1].column(), 0); // Start of line
+
+        let service_entries: Vec<_> = sections[1].entries().collect();
+        assert_eq!(service_entries.len(), 3);
+        assert_eq!(service_entries[0].line(), 5); // Type=simple
+        assert_eq!(service_entries[0].column(), 0); // Start of line
+        assert_eq!(service_entries[1].line(), 6); // ExecStart=...
+        assert_eq!(service_entries[1].column(), 0); // Start of line
+        assert_eq!(service_entries[2].line(), 7); // Environment=...
+        assert_eq!(service_entries[2].column(), 0); // Start of line
+
+        // Test line_col() method
+        assert_eq!(unit_entries[0].line_col(), (1, 0));
+        assert_eq!(service_entries[2].line_col(), (7, 0));
+    }
+
+    #[test]
+    fn test_line_col_multiline() {
+        // Test with line continuations
+        let text = r#"[Unit]
+Description=A long \
+value that spans \
+multiple lines
+After=network.target
+"#;
+        let unit = SystemdUnit::from_str(text).unwrap();
+        let section = unit.sections().next().unwrap();
+        let entries: Vec<_> = section.entries().collect();
+
+        assert_eq!(entries.len(), 2);
+        // First entry starts at line 1
+        assert_eq!(entries[0].line(), 1);
+        assert_eq!(entries[0].column(), 0);
+
+        // Second entry starts at line 4 (after the multi-line value)
+        assert_eq!(entries[1].line(), 4);
+        assert_eq!(entries[1].column(), 0);
     }
 }
